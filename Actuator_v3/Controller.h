@@ -51,8 +51,14 @@
 #include "Encoder.h"
 #include "LED.h"
 #include "Motor.h"
+#include "MPU9250.h"
 #include "NetworkPacket.h"
 #include "PID.h"
+#include "Timer.h"
+
+// an MPU9250 object with the MPU-9250 sensor on I2C bus 0 with address 0x68
+
+int status;
 
 class Controller {
   private:
@@ -74,6 +80,9 @@ class Controller {
     LED led;
     Motor motor = Motor(PIN_MTR_PWM, PIN_MTR_IN1, PIN_MTR_IN2);
     PID pid;
+    
+    Timer imuTimer = Timer(5); // hz
+    MPU9250 imu = MPU9250(Wire,0x68);
 
     void computeState () {
       float positionDrive = encoderDrive.getAngleRadians();
@@ -84,6 +93,12 @@ class Controller {
       state.effort = motor.getEffort();
       state.velocity = 0.0;
       state.torque = positionDiff * SEA_SPRING_RATE;
+      
+      if (imuTimer.ready()) {
+        step_imu();
+      }
+      
+      Serial.println(state.toString());
     }
 
     double formatAngle (double x) {
@@ -142,6 +157,17 @@ class Controller {
         setUpConfig();
       }
     }
+
+    void setUpImu() {
+      int imuStatus = imu.begin(19, 18);
+      if (imuStatus < 0) {
+        Serial.println("IMU initialization unsuccessful");
+        Serial.println("Check IMU wiring or try cycling power");
+        Serial.print("Status: ");
+        Serial.println(status);
+        while(1) { led.blink(255, 165, 0); delay(50); }
+      }
+    }
   
   public:
 
@@ -154,6 +180,8 @@ class Controller {
       encoderOutput.setUp();
       led.white();
       setUpConfig();
+      setUpImu();
+      step_imu();
     }
 
     ControllerState* getState () {
@@ -180,6 +208,20 @@ class Controller {
       } else {
         step_stop();
       }
+    }
+
+    void step_imu () {
+      imu.readSensor();
+      state.accel[0] = imu.getAccelX_mss();
+      state.accel[1] = imu.getAccelY_mss();
+      state.accel[2] = imu.getAccelZ_mss();
+      state.gyro[0] = imu.getGyroX_rads();
+      state.gyro[1] = imu.getGyroY_rads();
+      state.gyro[2] = imu.getGyroZ_rads();
+      state.mag[0] = imu.getMagX_uT();
+      state.mag[1] = imu.getMagY_uT();
+      state.mag[2] = imu.getMagZ_uT();
+      state.temp = imu.getTemperature_C();
     }
 
     void step_rotate () {

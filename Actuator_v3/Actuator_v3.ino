@@ -13,7 +13,7 @@ Timer timer(20); // hz
 
 void setup() {
   Serial.begin(115200);
-  
+
   controller.setUp();
 
   networking.controller = &controller;
@@ -27,6 +27,6 @@ void loop() {
     ControllerState* state = controller.getState();
     networking.step(ACTUATOR_ID, state);
   }
-  
+
   controller.step();
 }
