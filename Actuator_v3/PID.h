@@ -40,7 +40,7 @@ class PID {
   public:
     PID () { }
     
-    PID(double* Input, double* Output, double* Setpoint, double Kp, double Ki, double Kd, int POn, int ControllerDirection) {
+    PID(double* Input, double* Output, double* Setpoint, double Kp, double Ki, double Kd, int ControllerDirection) {
       myOutput = Output;
       myInput = Input;
       mySetpoint = Setpoint;
@@ -50,10 +50,11 @@ class PID {
       SampleTime = 100;
       
       PID::SetControllerDirection(ControllerDirection);
-      PID::SetTunings(Kp, Ki, Kd, POn);
+      PID::SetTunings(Kp, Ki, Kd);
     
       lastTime = millis() - SampleTime;
     }
+
     
     bool Compute () {
       if (!inAuto) return false;
@@ -99,6 +100,14 @@ class PID {
         return true;
       }
       else return false;
+    }
+
+    void SetMode(int Mode) {
+      bool newAuto = (Mode == AUTOMATIC);
+      if (newAuto && !inAuto) {
+        PID::Initialize();
+      }
+      inAuto = newAuto;
     }
 
     void SetOutputLimits(double Min, double Max) {

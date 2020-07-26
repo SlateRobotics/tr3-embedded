@@ -1,4 +1,4 @@
-#define ACTUATOR_ID "a1"
+#define ACTUATOR_ID "a2"
 
 #define TR2_AN_SSID "TR2_AN_111222333"
 #define TR2_AN_PASS "MATHI78741"
@@ -14,6 +14,7 @@ Timer timer(20); // hz
 void setup() {
   Serial.begin(115200);
 
+  controller.requireImu = false;
   controller.setUp();
 
   networking.controller = &controller;
@@ -22,9 +23,11 @@ void setup() {
   networking.connect();
 }
 
-void loop() {
+void loop() { 
   if (timer.ready()) {
     ControllerState* state = controller.getState();
+    Serial.println(state->toString());
+    //controller.printData();
     networking.step(ACTUATOR_ID, state);
   }
 

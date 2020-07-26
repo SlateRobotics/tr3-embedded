@@ -23,7 +23,7 @@ class ControllerState {
       result += velocity;
       result += ",trq:";
       result += torque;
-      result += ",accel:{";
+      /*result += ",accel:{";
       result += accel[0];
       result += ",";
       result += accel[1];
@@ -42,7 +42,7 @@ class ControllerState {
       result += ",";
       result += mag[2];
       result += "},temp:";
-      result += temp;
+      result += temp;*/
       result += ";";
       return result;
     }

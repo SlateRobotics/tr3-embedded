@@ -9,9 +9,15 @@
 class Networking {
   private:
     WiFiClient client;
-    char req[512];
-    char res[512];
-    uint8_t packet[16];
+    char req[256];
+    char res[16384];
+    char buf[256];
+    
+    uint16_t bufIdx = 0;
+    uint16_t packetIdx = 0;
+    char c;
+    
+    uint8_t packet[4096];
     NetworkPacket networkPacket;
 
     void connectWifi() {
@@ -50,6 +56,7 @@ class Networking {
 
     void step (char* actuatorId, ControllerState* state) {
       request(actuatorId, state);
+      client.readStringUntil('\r').toCharArray(res, 16384);
       response();
     }
 
@@ -59,25 +66,23 @@ class Networking {
       
       sprintf(req, "%s:%s;\r\n", actuatorId, stateStr);
       client.print(req);
-      client.readStringUntil('\r').toCharArray(res, 512);
     }
 
     void response () {
-      int bufIdx = 0;
-      char buf[16];
-      int packetIdx = 0;
-    
       // no command
       if (strstr(res, "nc;") || strlen(res) == 0) {
         return;
       }
-    
+      
+      uint16_t _len;
+      //Serial.println(millis());
       for (int i = 0; i < strlen(res); i++) {
-        char c = res[i];
+        c = res[i];
         if (c == ':') {
           bufIdx = 0;
         } else if (c == ';' && bufIdx > 0) {
-          networkPacket = NetworkPacket(packet);
+          //Serial.println(millis());
+          networkPacket = NetworkPacket(packet, _len);
           controller->parseCmd(networkPacket);
           packetIdx = 0;
           bufIdx = 0;
@@ -86,6 +91,9 @@ class Networking {
         } else {
           buf[bufIdx] = '\0';
           bufIdx = 0;
+          if (packetIdx == 2) {
+            _len = atoi(buf);
+          }
           packet[packetIdx++] = atoi(buf);
         }
       }
