@@ -22,6 +22,9 @@
 #define EEADDR_REG_C2_2 43
 #define EEADDR_REG_C2_3 47
 #define EEADDR_REG_OFFSET 51
+#define EEADDR_PID_P 71
+#define EEADDR_PID_I 75
+#define EEADDR_PID_D 79
 
 #define EE_SET_1 0x51
 #define EE_SET_2 0x22

@@ -80,7 +80,7 @@ class Networking {
         c = res[i];
         if (c == ':') {
           bufIdx = 0;
-        } else if (c == ';' && bufIdx > 0) {
+        } else if (c == ';' && packetIdx > 0) {
           //Serial.println(millis());
           networkPacket = NetworkPacket(packet, _len);
           controller->parseCmd(networkPacket);

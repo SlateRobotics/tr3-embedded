@@ -26,7 +26,7 @@ void setup() {
 void loop() { 
   if (timer.ready()) {
     ControllerState* state = controller.getState();
-    Serial.println(state->toString());
+    //Serial.println(state->toString());
     //controller.printData();
     networking.step(ACTUATOR_ID, state);
   }

@@ -17,6 +17,7 @@
 #define CMD_FLIP_MOTOR 0x17
 #define CMD_CALIBRATE 0x18
 #define CMD_SHUTDOWN 0x19
+#define CMD_UPDATE_PID 0x20
 
 #define MODE_UPDATE_FIRMWARE 0x01
 #define MODE_CALIBRATE 0x02
@@ -65,7 +66,7 @@ class Controller {
     double pidPos = 0;
     double pidOut = 0;
     double pidGoal = 0;
-    double pidThreshold = 0.003;
+    double pidThreshold = 0.001;
     double pidMaxSpeed = 100;
 
     float SEA_SPRING_RATE = 882.0; // Newton-Meters per Radian
@@ -210,6 +211,11 @@ class Controller {
         regression.coefficients2[2] = storage.readFloat(EEADDR_REG_C2_3);
 
         regression.setOffset(storage.readFloat(EEADDR_REG_OFFSET));
+
+        double p = storage.readFloat(EEADDR_PID_P);
+        double i = storage.readFloat(EEADDR_PID_I);
+        double d = storage.readFloat(EEADDR_PID_D);
+        pid.SetTunings(p, i, d);
       } else {
         storage.configure();
       }
@@ -372,6 +378,13 @@ class Controller {
           speed = -pidMaxSpeed;
         }
         motor.step(speed);
+
+        Serial.print("GOAL: ");
+        Serial.print(pidGoal, 6);
+        Serial.print(", POS: ");
+        Serial.print(pidPos, 6);
+        Serial.print(", EFF: ");
+        Serial.println(speed);
       } else {
         motor.stop();
       }
@@ -455,6 +468,8 @@ class Controller {
         cmd_calibrate();
       } else if (packet.command == CMD_SHUTDOWN) {
         cmd_shutdown();
+      } else if (packet.command == CMD_UPDATE_PID) {
+        cmd_updatePid(packet);
       }
     }
 
@@ -470,6 +485,7 @@ class Controller {
       int param = packet.parameters[0] + packet.parameters[1] * 256;
       pidMaxSpeed = floor(100.0 * packet.parameters[2] / 255.0);
       double pos = param / 65535.0 * TAU;
+      Serial.println(pos);
       pidGoal = formatAngle(pos);
     }
 
@@ -569,6 +585,17 @@ class Controller {
       while (1) {
         motor.stop();
       }
+    }
+
+    void cmd_updatePid(NetworkPacket packet) {
+      double p = packet.parameters[0] / 10.0;
+      double i = packet.parameters[1] / 10.0;
+      double d = packet.parameters[2] / 10.0;
+      pid.SetTunings(p, i, d);
+      storage.writeFloat(EEADDR_PID_P, p);
+      storage.writeFloat(EEADDR_PID_I, i);
+      storage.writeFloat(EEADDR_PID_D, d);
+      storage.commit();
     }
 };
 
