@@ -18,6 +18,7 @@
 #define CMD_CALIBRATE 0x18
 #define CMD_SHUTDOWN 0x19
 #define CMD_UPDATE_PID 0x20
+#define CMD_SET_VELOCITY 0x21
 
 #define MODE_UPDATE_FIRMWARE 0x01
 #define MODE_CALIBRATE 0x02
@@ -25,6 +26,7 @@
 #define MODE_SERVO 0x10
 #define MODE_BACKDRIVE 0x11
 #define MODE_ROTATE 0x12
+#define MODE_VELOCITY 0x13
 
 #define PIN_MTR_PWM 23 // ENABLE / PWM
 #define PIN_MTR_IN1 27 // IN1 / DRIVE 1
@@ -69,6 +71,9 @@ class Controller {
     double pidThreshold = 0.001;
     double pidMaxSpeed = 100;
 
+    static const int velocityReadSize = 20;
+    float velocityReads[velocityReadSize];
+
     float SEA_SPRING_RATE = 882.0; // Newton-Meters per Radian
 
     bool prevUpDrive = false;
@@ -77,18 +82,19 @@ class Controller {
     float prevLapOutput = 0.0;
 
     long calibrateStart = 0;
-    
+
     ControllerState state;
-    
+
     Encoder encoderDrive = Encoder(PIN_END_CS, PIN_END_CLK, PIN_END_DO);
     Encoder encoderOutput = Encoder(PIN_ENO_CS, PIN_ENO_CLK, PIN_ENO_DO);
     LED led;
     Motor motor = Motor(PIN_MTR_PWM, PIN_MTR_IN1, PIN_MTR_IN2);
     PID pid = PID(&pidPos, &pidOut, &pidGoal, 9.0, 5.0, 0.2, DIRECT);
+    PID pid_vel = PID(&pidPos, &pidOut, &pidGoal, 0.0, 1.0, 0.0, DIRECT);
     Storage storage;
 
     Regression regression;
-    
+
     Timer imuTimer = Timer(5); // hz
     MPU9250 imu = MPU9250(Wire,0x68);
 
@@ -100,7 +106,7 @@ class Controller {
       float f2 = regression.filter2(positionOutput);
 
       double positionDiff = atan2(sin(positionOutput-positionDrive), cos(positionOutput-positionDrive));
-      double positionDiffFiltered = positionDiff - f1 - f2;
+      double positionDiffFiltered = positionDiff;// - f1 - f2;
 
       bool upDrive = encoderDrive.isUp();
       if (prevUpDrive != upDrive) {
@@ -126,7 +132,7 @@ class Controller {
         storage.commit();
         prevUpOutput = upOutput;
       }
-      
+
       double lapOutput = encoderOutput.getLap();
       if (abs(prevLapOutput - lapOutput) > 0.01) {
         storage.writeDouble(EEADDR_ENC_O_LAP, lapOutput);
@@ -135,10 +141,31 @@ class Controller {
       }
 
       state.position = positionOutput;
+      state.rotations = encoderOutput.getRotations();
       state.effort = motor.getEffort();
-      state.velocity = 0.0;
       state.torque = positionDiffFiltered * SEA_SPRING_RATE;
-      
+
+      long timeDiff = encoderOutput.getPrevPositionTS(0) - encoderOutput.getPrevPositionTS(1);
+      double dif = encoderOutput.getPrevPosition(0) - encoderOutput.getPrevPosition(1);
+      if (dif < -encoderOutput.getEncoderResolution() / 2) {
+        dif = encoderOutput.getEncoderResolution() + dif;
+      } else if (dif > encoderOutput.getEncoderResolution() / 2) {
+        dif = dif - encoderOutput.getEncoderResolution();
+      }
+
+      double posDiff = dif / (encoderOutput.getRatio() * encoderOutput.getEncoderResolution()) * TAU;
+
+      float vel = posDiff / (timeDiff / 1000.0);
+      float velSum = vel;
+
+      for (int i = velocityReadSize; i > 0; i--) {
+        velocityReads[i] = velocityReads[i - 1];
+        velSum += velocityReads[i];
+      }
+      velocityReads[0] = vel;
+
+      state.velocity = velSum / velocityReadSize;
+
       if (imuTimer.ready()) {
         step_imu();
       }
@@ -164,12 +191,12 @@ class Controller {
 
       if (storage.isConfigured()) {
         SEA_SPRING_RATE = storage.readUInt16(EEADDR_SEA_SPRING_RATE);
-      
+
         encoderDrive.readPosition();
         int encDriveOffset = storage.readUInt16(EEADDR_ENC_D_OFFSET);
         double encDriveLap = storage.readDouble(EEADDR_ENC_D_LAP);
         bool encDriveUp = storage.readBool(EEADDR_ENC_D_UP);
-        
+
         if (encDriveUp == true && encoderDrive.isUp() == false) {
           encDriveLap += 1;
         } else if (encDriveUp == false && encoderDrive.isUp() == true) {
@@ -185,13 +212,13 @@ class Controller {
         int encOutputOffset = storage.readUInt16(EEADDR_ENC_O_OFFSET);
         double encOutputLap = storage.readDouble(EEADDR_ENC_O_LAP);
         bool encOutputUp = storage.readBool(EEADDR_ENC_O_UP);
-        
+
         if (encOutputUp == true && encoderOutput.isUp() == false) {
           encOutputLap += 1;
         } else if (encOutputUp == false && encoderOutput.isUp() == true) {
           encOutputLap -= 1;
         }
-        
+
         encoderOutput.setOffset(encOutputOffset);
         encoderOutput.reconstruct(encOutputLap);
         prevLapOutput = encoderOutput.getLap();
@@ -205,7 +232,7 @@ class Controller {
         regression.coefficients1[0] = storage.readFloat(EEADDR_REG_C1_1);
         regression.coefficients1[1] = storage.readFloat(EEADDR_REG_C1_2);
         regression.coefficients1[2] = storage.readFloat(EEADDR_REG_C1_3);
-        
+
         regression.coefficients2[0] = storage.readFloat(EEADDR_REG_C2_1);
         regression.coefficients2[1] = storage.readFloat(EEADDR_REG_C2_2);
         regression.coefficients2[2] = storage.readFloat(EEADDR_REG_C2_3);
@@ -234,7 +261,7 @@ class Controller {
         }
       }
     }
-  
+
   public:
 
     Controller () { }
@@ -254,6 +281,11 @@ class Controller {
       fanOff();
       pid.SetMode(AUTOMATIC);
       pid.SetOutputLimits(-1, 1);
+
+      pid_vel.SetMode(AUTOMATIC);
+      pid_vel.SetOutputLimits(-1, 1);
+      pid_vel.SetIThresh(1.0);
+      pid_vel.DisableIClamp();
     }
 
     ControllerState* getState () {
@@ -311,6 +343,8 @@ class Controller {
         step_backdrive();
       } else if (mode == MODE_SERVO) {
         step_servo();
+      } else if (mode == MODE_VELOCITY) {
+        step_velocity();
       } else if (mode == MODE_CALIBRATE) {
         step_calibrate();
       } else {
@@ -355,7 +389,7 @@ class Controller {
     void step_servo () {
       led.pulse(LED_MAGENTA);
       pidPos = state.position;
-    
+
       // ignore if within threshold of goal -- good 'nuff
       if (abs(pidPos - pidGoal) >= pidThreshold) {
         double d = formatAngle(pidPos) - formatAngle(pidGoal);
@@ -369,7 +403,7 @@ class Controller {
           pidGoal = formatAngle(pidGoal);
           pidPos = formatAngle(pidPos);
         }
-    
+
         pid.Compute();
         int speed = pidOut * 100.0;
         if (speed > pidMaxSpeed) {
@@ -390,6 +424,32 @@ class Controller {
       }
     }
 
+    void step_velocity () {
+      led.pulse(LED_MAGENTA);
+      pidPos = state.velocity;
+
+      if (abs(pidGoal) > 0.01) {
+        pid_vel.Compute();
+
+        Serial.print(pidPos);
+        Serial.print(", ");
+        Serial.print(pidGoal);
+        Serial.print(", ");
+        Serial.println(pidOut);
+
+        int speed = pidOut * 100.0;
+        if (speed > pidMaxSpeed) {
+          speed = pidMaxSpeed;
+        } else if (speed < -pidMaxSpeed) {
+          speed = -pidMaxSpeed;
+        }
+        motor.step(speed);
+      } else {
+        pid_vel.clear();
+        motor.stop();
+      }
+    }
+
     void step_calibrate() {
       led.pulse(LED_GREEN);
 
@@ -397,23 +457,23 @@ class Controller {
       if (ACTUATOR_ID == "a0" || ACTUATOR_ID == "a1" || ACTUATOR_ID == "a2" || ACTUATOR_ID == "b0" || ACTUATOR_ID == "b1") {
         duration = 15000;
       }
-      
+
       if (millis() - calibrateStart < duration) {
         encoderDrive.step();
         encoderOutput.step();
         motor.executePreparedCommand();
-       
+
         float positionDrive = encoderDrive.getAngleRadians();
         float positionOutput = encoderOutput.getAngleRadians();
         float positionDiff = atan2(sin(positionOutput-positionDrive), cos(positionOutput-positionDrive));
         regression.add(positionOutput, positionDiff);
       } else {
         regression.train();
-  
+
         storage.writeFloat(EEADDR_REG_C1_1, regression.coefficients1[0]);
         storage.writeFloat(EEADDR_REG_C1_2, regression.coefficients1[1]);
         storage.writeFloat(EEADDR_REG_C1_3, regression.coefficients1[2]);
-        
+
         storage.writeFloat(EEADDR_REG_C2_1, regression.coefficients2[0]);
         storage.writeFloat(EEADDR_REG_C2_2, regression.coefficients2[1]);
         storage.writeFloat(EEADDR_REG_C2_3, regression.coefficients2[2]);
@@ -433,7 +493,7 @@ class Controller {
     /// ---------------------
     /// --- CMD FUNCTIONS ---
     /// ---------------------
-  
+
     void parseCmd (NetworkPacket packet) {
       if (packet.command == CMD_UPDATE_FIRMWARE_BEGIN) {
         led.white();
@@ -470,6 +530,8 @@ class Controller {
         cmd_shutdown();
       } else if (packet.command == CMD_UPDATE_PID) {
         cmd_updatePid(packet);
+      } else if (packet.command == CMD_SET_VELOCITY) {
+        cmd_setVelocity(packet);
       }
     }
 
@@ -478,6 +540,8 @@ class Controller {
       if (mode == MODE_SERVO) {
         pidMaxSpeed = 100;
         pidGoal = (double)state.position;
+      } else if (mode == MODE_VELOCITY) {
+        pidGoal = 0;
       }
     }
 
@@ -489,6 +553,16 @@ class Controller {
       pidGoal = formatAngle(pos);
     }
 
+    void cmd_setVelocity (NetworkPacket packet) {
+      int param = packet.parameters[0] + packet.parameters[1] * 256;
+      pidGoal = (param / 100.0) - 10.0;
+      Serial.print(packet.parameters[0]);
+      Serial.print(",");
+      Serial.print(packet.parameters[1]);
+      Serial.print(":");
+      Serial.println(pidGoal);
+    }
+
     void cmd_resetPosition () {
       float positionOutput = encoderOutput.getAngleRadians();
       regression.addOffset(positionOutput);
@@ -496,7 +570,7 @@ class Controller {
       float pos = encoderOutput.getPosition();
       encoderOutput.addPosition(-pos);
       encoderDrive.addPosition(-pos);
-      
+
       pidGoal = 0;
       pidOut = 0;
       pidPos = 0;
@@ -506,11 +580,11 @@ class Controller {
       uint16_t encD_offset = encoderDrive.getOffset();
       storage.writeUInt16(EEADDR_ENC_O_OFFSET, encO_offset);
       storage.writeUInt16(EEADDR_ENC_D_OFFSET, encD_offset);
-      
+
       storage.writeFloat(EEADDR_REG_C1_1, regression.coefficients1[0]);
       storage.writeFloat(EEADDR_REG_C1_2, regression.coefficients1[1]);
       storage.writeFloat(EEADDR_REG_C1_3, regression.coefficients1[2]);
-      
+
       storage.writeFloat(EEADDR_REG_C2_1, regression.coefficients2[0]);
       storage.writeFloat(EEADDR_REG_C2_2, regression.coefficients2[1]);
       storage.writeFloat(EEADDR_REG_C2_3, regression.coefficients2[2]);
@@ -521,7 +595,7 @@ class Controller {
 
     void cmd_flipMotorPins () {
       motor.flipDrivePins();
-      
+
       storage.writeBool(EEADDR_MTR_FLIP, motor.flipDrivePinsStatus());
       storage.commit();
     }
@@ -530,11 +604,11 @@ class Controller {
       int offsetBinary = 128;
       int motorStep = packet.parameters[0] - offsetBinary;
       int motorDuration = packet.parameters[1] + packet.parameters[2] * 256;
-      
+
       if (motorDuration > 1000) {
         motorDuration = 1000;
       }
-      
+
       motor.prepareCommand(motorStep, motorDuration);
     }
 
@@ -556,14 +630,14 @@ class Controller {
       mode = MODE_CALIBRATE;
       encoderOutput.resetPos();
       encoderDrive.resetPos();
-      
+
       if (ACTUATOR_ID == "a0" || ACTUATOR_ID == "a1" || ACTUATOR_ID == "a2" || ACTUATOR_ID == "b0" || ACTUATOR_ID == "b1") {
       SEA_SPRING_RATE = 882;
       } else {
       SEA_SPRING_RATE = 300;
       }
       storage.writeUInt16(EEADDR_SEA_SPRING_RATE, SEA_SPRING_RATE);
-      
+
       uint16_t encO_offset = encoderOutput.getOffset();
       uint16_t encD_offset = encoderDrive.getOffset();
       storage.writeUInt16(EEADDR_ENC_O_OFFSET, encO_offset);
@@ -575,13 +649,13 @@ class Controller {
       led.off();
       motor.stop();
       computeState();
-      
+
       storage.writeBool(EEADDR_ENC_O_UP, encoderOutput.isUp());
       storage.writeDouble(EEADDR_ENC_O_LAP, encoderOutput.getLap());
       storage.writeBool(EEADDR_ENC_D_UP, encoderDrive.isUp());
       storage.writeDouble(EEADDR_ENC_D_LAP, encoderDrive.getLap());
       storage.commit();
-      
+
       while (1) {
         motor.stop();
       }
