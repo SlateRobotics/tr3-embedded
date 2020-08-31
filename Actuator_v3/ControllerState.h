@@ -6,6 +6,7 @@ class ControllerState {
 
   public:
     float position = 0.0; // Radians
+    int rotations = 0;
     float effort = 0.0; // -100 -> 100
     float velocity = 0.0; // Radians per second
     float torque = 0.0; // Newton-Meters
@@ -15,13 +16,15 @@ class ControllerState {
     float temp = 0.0; // celsius
   
     String toString() {
-      String result = "pos:";
-      result += position;
-      result += ",eff:";
+      String result = "";
+      result += String(position, 6);
+      result += ",";
+      result += rotations;
+      result += ",";
       result += effort;
-      result += ",vel:";
+      result += ",";
       result += velocity;
-      result += ",trq:";
+      result += ",";
       result += torque;
       /*result += ",accel:{";
       result += accel[0];

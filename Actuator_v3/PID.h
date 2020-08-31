@@ -29,6 +29,9 @@ class PID {
     unsigned long SampleTime;
     double outMin, outMax;
     bool inAuto, pOnE;
+    double iThresh = 0.30;
+    double iClamp = 0.2;
+    bool disableIClamp = false;
     
     void Initialize () {
       outputSum = *myOutput;
@@ -69,12 +72,10 @@ class PID {
     
         outputSum += (ki * error);
     
-        double iClamp = 0.2;
-        if (abs(error) > iClamp) {
+        if (disableIClamp == false && abs(error) > iClamp) {
           outputSum = 0;
         }
     
-        double iThresh = 0.30;
         if (outputSum > iThresh) {
           outputSum = iThresh;
         } else if (outputSum < -iThresh) {
@@ -168,6 +169,18 @@ class PID {
     //int GetMode();
     
     //int GetDirection();
+
+    void SetIThresh(float t) {
+      iThresh = t;
+    }
+
+    void SetIClamp(float c) {
+      iClamp = c;
+    }
+
+    void DisableIClamp() {
+      disableIClamp = true;
+    }
     
     void clear() {
       outputSum = 0;

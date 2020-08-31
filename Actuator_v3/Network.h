@@ -61,8 +61,9 @@ class Networking {
     }
 
     void request (char* actuatorId, ControllerState* state) {
-      static char stateStr[8];
-      dtostrf(state->position, 6, 4, stateStr);
+      static char stateStr[64];
+      state->toString().toCharArray(stateStr, 64);
+      //dtostrf(state->position, 6, 4, stateStr);
       
       sprintf(req, "%s:%s;\r\n", actuatorId, stateStr);
       client.print(req);

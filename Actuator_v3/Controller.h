@@ -17,6 +17,8 @@
 #define CMD_FLIP_MOTOR 0x17
 #define CMD_CALIBRATE 0x18
 #define CMD_SHUTDOWN 0x19
+#define CMD_UPDATE_PID 0x20
+#define CMD_SET_VELOCITY 0x21
 
 #define MODE_UPDATE_FIRMWARE 0x01
 #define MODE_CALIBRATE 0x02
@@ -24,6 +26,7 @@
 #define MODE_SERVO 0x10
 #define MODE_BACKDRIVE 0x11
 #define MODE_ROTATE 0x12
+#define MODE_VELOCITY 0x13
 
 #define PIN_MTR_PWM 23 // ENABLE / PWM
 #define PIN_MTR_IN1 27 // IN1 / DRIVE 1
@@ -68,6 +71,9 @@ class Controller {
     double pidThreshold = 0.003;
     double pidMaxSpeed = 100;
 
+    static const int velocityReadSize = 20;
+    float velocityReads[velocityReadSize];
+
     float SEA_SPRING_RATE = 882.0; // Newton-Meters per Radian
 
     bool prevUpDrive = false;
@@ -84,6 +90,7 @@ class Controller {
     LED led;
     Motor motor = Motor(PIN_MTR_PWM, PIN_MTR_IN1, PIN_MTR_IN2);
     PID pid = PID(&pidPos, &pidOut, &pidGoal, 9.0, 5.0, 0.2, DIRECT);
+    PID pid_vel = PID(&pidPos, &pidOut, &pidGoal, 0.0, 1.0, 0.0, DIRECT);
     Storage storage;
 
     Regression regression;
@@ -99,7 +106,7 @@ class Controller {
       float f2 = regression.filter2(positionOutput);
 
       double positionDiff = atan2(sin(positionOutput-positionDrive), cos(positionOutput-positionDrive));
-      double positionDiffFiltered = positionDiff - f1 - f2;
+      double positionDiffFiltered = positionDiff;// - f1 - f2;
 
       bool upDrive = encoderDrive.isUp();
       if (prevUpDrive != upDrive) {
@@ -134,9 +141,30 @@ class Controller {
       }
 
       state.position = positionOutput;
+      state.rotations = encoderOutput.getRotations();
       state.effort = motor.getEffort();
-      state.velocity = 0.0;
       state.torque = positionDiffFiltered * SEA_SPRING_RATE;
+
+      long timeDiff = encoderOutput.getPrevPositionTS(0) - encoderOutput.getPrevPositionTS(1);
+      double dif = encoderOutput.getPrevPosition(0) - encoderOutput.getPrevPosition(1);
+      if (dif < -encoderOutput.getEncoderResolution() / 2) {
+        dif = encoderOutput.getEncoderResolution() + dif;
+      } else if (dif > encoderOutput.getEncoderResolution() / 2) { 
+        dif = dif - encoderOutput.getEncoderResolution();
+      }
+
+      double posDiff = dif / (encoderOutput.getRatio() * encoderOutput.getEncoderResolution()) * TAU;
+
+      float vel = posDiff / (timeDiff / 1000.0);
+      float velSum = vel;
+      
+      for (int i = velocityReadSize; i > 0; i--) {
+        velocityReads[i] = velocityReads[i - 1];
+        velSum += velocityReads[i];
+      }
+      velocityReads[0] = vel;
+      
+      state.velocity = velSum / velocityReadSize;
       
       if (imuTimer.ready()) {
         step_imu();
@@ -248,6 +276,11 @@ class Controller {
       fanOff();
       pid.SetMode(AUTOMATIC);
       pid.SetOutputLimits(-1, 1);
+      
+      pid_vel.SetMode(AUTOMATIC);
+      pid_vel.SetOutputLimits(-1, 1);
+      pid_vel.SetIThresh(1.0);
+      pid_vel.DisableIClamp();
     }
 
     ControllerState* getState () {
@@ -305,6 +338,8 @@ class Controller {
         step_backdrive();
       } else if (mode == MODE_SERVO) {
         step_servo();
+      } else if (mode == MODE_VELOCITY) {
+        step_velocity();
       } else if (mode == MODE_CALIBRATE) {
         step_calibrate();
       } else {
@@ -373,6 +408,32 @@ class Controller {
         }
         motor.step(speed);
       } else {
+        motor.stop();
+      }
+    }
+
+    void step_velocity () {
+      led.pulse(LED_MAGENTA);
+      pidPos = state.velocity;
+    
+      if (abs(pidGoal) > 0.01) {
+        pid_vel.Compute();
+
+        Serial.print(pidPos);
+        Serial.print(", ");
+        Serial.print(pidGoal);
+        Serial.print(", ");
+        Serial.println(pidOut);
+        
+        int speed = pidOut * 100.0;
+        if (speed > pidMaxSpeed) {
+          speed = pidMaxSpeed;
+        } else if (speed < -pidMaxSpeed) {
+          speed = -pidMaxSpeed;
+        }
+        motor.step(speed);
+      } else {
+        pid_vel.clear();
         motor.stop();
       }
     }
@@ -455,6 +516,8 @@ class Controller {
         cmd_calibrate();
       } else if (packet.command == CMD_SHUTDOWN) {
         cmd_shutdown();
+      } else if (packet.command == CMD_SET_VELOCITY) {
+        cmd_setVelocity(packet);
       }
     }
 
@@ -463,6 +526,8 @@ class Controller {
       if (mode == MODE_SERVO) {
         pidMaxSpeed = 100;
         pidGoal = (double)state.position;
+      } else if (mode == MODE_VELOCITY) {
+        pidGoal = 0;
       }
     }
 
@@ -471,6 +536,16 @@ class Controller {
       pidMaxSpeed = floor(100.0 * packet.parameters[2] / 255.0);
       double pos = param / 65535.0 * TAU;
       pidGoal = formatAngle(pos);
+    }
+
+    void cmd_setVelocity (NetworkPacket packet) {
+      int param = packet.parameters[0] + packet.parameters[1] * 256;
+      pidGoal = (param / 100.0) - 10.0;
+      Serial.print(packet.parameters[0]);
+      Serial.print(",");
+      Serial.print(packet.parameters[1]);
+      Serial.print(":");
+      Serial.println(pidGoal);
     }
 
     void cmd_resetPosition () {

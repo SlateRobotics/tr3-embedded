@@ -10,15 +10,20 @@ class Encoder {
     uint16_t encoderResolution = 4096;
     static const int prevPositionN = 2;
     double prevPosition[prevPositionN];
+    long prevPositionTS[prevPositionN];
     double pos = 0;
     double ratio = 1.0;
     uint16_t offset = 0;
 
+    int rotations = 0;
+
     void formatPosition() {
       double maxPos = ratio * (double)encoderResolution;
       if (pos > maxPos) {
+        rotations += 1;
         pos -= maxPos;
       } else if (pos < 0) {
+        rotations -= 1;
         pos += maxPos;
       }
     }
@@ -70,6 +75,9 @@ class Encoder {
       
       prevPosition[1] = prevPosition[0];
       prevPosition[0] = dataOut;
+
+      prevPositionTS[1] = prevPositionTS[0];
+      prevPositionTS[0] = millis();
       delayMicroseconds(1);
       
       int16_t dif = prevPosition[0] - prevPosition[1];
@@ -96,6 +104,14 @@ class Encoder {
     double getLap () {
       return fmod(ratio + ((pos - (double)prevPosition[0] + (double)offset) / encoderResolution), ratio);
     }
+
+    double getEncoderResolution () {
+      return encoderResolution;
+    }
+
+    double getRatio () {
+      return ratio;
+    }
     
     double getOffset() {
       return offset;
@@ -119,6 +135,14 @@ class Encoder {
       formatPosition();
     }
 
+    double getPrevPosition(int i) {
+      return prevPosition[i];
+    }
+
+    long getPrevPositionTS(int i) {
+      return prevPositionTS[i];
+    }
+
     void resetPos () {
       offset = readPosition();
       pos = 0;
@@ -127,6 +151,10 @@ class Encoder {
     
     double getAngleRadians() {
       return pos / (ratio * encoderResolution) * TAU;
+    }
+
+    int getRotations () {
+      return rotations;
     }
     
 };
